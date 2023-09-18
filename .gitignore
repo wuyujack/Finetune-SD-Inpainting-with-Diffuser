@@ -1,5 +1,11 @@
 # Initially taken from Github's Python gitignore file
 
+models/
+examples/research_projects/dreambooth_inpaint/class_image/
+examples/research_projects/dreambooth_inpaint/models/
+examples/research_projects/dreambooth_inpaint/instance_images/
+examples/research_projects/dreambooth_inpaint/path-to-class-images/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
