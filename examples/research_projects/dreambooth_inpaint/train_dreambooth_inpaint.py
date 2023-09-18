@@ -5,7 +5,7 @@ import math
 import os
 import random
 from pathlib import Path
-
+import pdb
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -360,12 +360,16 @@ class DreamBoothDataset(Dataset):
         example["PIL_images"] = instance_image
         example["instance_images"] = self.image_transforms(instance_image)
 
+        print("self.instance_prompt: ", self.instance_prompt)
+
         example["instance_prompt_ids"] = self.tokenizer(
             self.instance_prompt,
             padding="do_not_pad",
             truncation=True,
             max_length=self.tokenizer.model_max_length,
         ).input_ids
+
+        print("example instance_prompt_ids: ", example["instance_prompt_ids"])
 
         if self.class_data_root:
             class_image = Image.open(self.class_images_path[index % self.num_class_images])
@@ -436,7 +440,7 @@ def main():
         if cur_class_images < args.num_class_images:
             torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
             pipeline = StableDiffusionInpaintPipeline.from_pretrained(
-                args.pretrained_model_name_or_path, torch_dtype=torch_dtype, safety_checker=None
+                args.pretrained_model_name_or_path, torch_dtype=torch_dtype, safety_checker=None, cache_dir="./models",
             )
             pipeline.set_progress_bar_config(disable=True)
 
@@ -484,14 +488,14 @@ def main():
 
     # Load the tokenizer
     if args.tokenizer_name:
-        tokenizer = CLIPTokenizer.from_pretrained(args.tokenizer_name)
+        tokenizer = CLIPTokenizer.from_pretrained(args.tokenizer_name, cache_dir="./models")
     elif args.pretrained_model_name_or_path:
-        tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
+        tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer", cache_dir="./models")
 
     # Load models and create wrapper for stable diffusion
-    text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
-    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae")
-    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
+    text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder", cache_dir="./models")
+    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path, subfolder="vae", cache_dir="./models")
+    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet", cache_dir="./models")
 
     vae.requires_grad_(False)
     if not args.train_text_encoder:
@@ -531,7 +535,7 @@ def main():
         eps=args.adam_epsilon,
     )
 
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", cache_dir="./models")
 
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
@@ -545,7 +549,11 @@ def main():
 
     def collate_fn(examples):
         input_ids = [example["instance_prompt_ids"] for example in examples]
+        print("len(input_ids): ", len(input_ids))
+        print("input_ids: ", input_ids)
+        print("input_ids[0]: ", input_ids[0])
         pixel_values = [example["instance_images"] for example in examples]
+        print("len(pixel_values): ", len(pixel_values))
 
         # Concat class and instance examples for prior preservation.
         # We do this to avoid doing two forward passes.
@@ -577,9 +585,13 @@ def main():
                 masked_images.append(masked_image)
 
         pixel_values = torch.stack(pixel_values)
+        print("pixel_values.shape: ", pixel_values.shape)
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
         input_ids = tokenizer.pad({"input_ids": input_ids}, padding=True, return_tensors="pt").input_ids
+        print("after tokenizer.pad, input_ids[0]: ", input_ids[0])
+        print("after tokenizer.pad, input_ids: ", input_ids)
+        print("after tokenizer.pad, input_ids.shape: ", input_ids.shape)
         masks = torch.stack(masks)
         masked_images = torch.stack(masked_images)
         batch = {"input_ids": input_ids, "pixel_values": pixel_values, "masks": masks, "masked_images": masked_images}
@@ -694,25 +706,32 @@ def main():
 
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
+                print("latents shape: {}".format(latents.shape))
 
                 # Convert masked images to latent space
                 masked_latents = vae.encode(
                     batch["masked_images"].reshape(batch["pixel_values"].shape).to(dtype=weight_dtype)
                 ).latent_dist.sample()
                 masked_latents = masked_latents * vae.config.scaling_factor
+                print("masked_latents: {}".format(masked_latents.shape))
 
                 masks = batch["masks"]
                 # resize the mask to latents shape as we concatenate the mask to the latents
+                print("masks: {}".format(masks.shape))
                 mask = torch.stack(
                     [
                         torch.nn.functional.interpolate(mask, size=(args.resolution // 8, args.resolution // 8))
                         for mask in masks
                     ]
                 )
+                print("mask: {}".format(mask.shape))
+                # pdb.set_trace()
                 mask = mask.reshape(-1, 1, args.resolution // 8, args.resolution // 8)
+                print("after reshape mask: {}".format(mask.shape))
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
+                print("noise: {}".format(noise.shape))
                 bsz = latents.shape[0]
                 # Sample a random timestep for each image
                 timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
@@ -721,15 +740,20 @@ def main():
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                print("noisy_latents: {}".format(noisy_latents.shape))
 
                 # concatenate the noised latents with the mask and the masked latents
                 latent_model_input = torch.cat([noisy_latents, mask, masked_latents], dim=1)
+                print("latent_model_input: {}".format(latent_model_input.shape))
 
                 # Get the text embedding for conditioning
+                print("batch input_ids: {}".format(batch["input_ids"].shape))
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
+                print("encoder_hidden_states: {}".format(encoder_hidden_states.shape))
 
                 # Predict the noise residual
                 noise_pred = unet(latent_model_input, timesteps, encoder_hidden_states).sample
+                print("noise_pred: {}".format(noise_pred.shape))
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
@@ -793,6 +817,7 @@ def main():
             args.pretrained_model_name_or_path,
             unet=accelerator.unwrap_model(unet),
             text_encoder=accelerator.unwrap_model(text_encoder),
+            cache_dir="./models"
         )
         pipeline.save_pretrained(args.output_dir)
 

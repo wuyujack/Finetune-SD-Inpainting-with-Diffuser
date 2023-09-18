@@ -1003,6 +1003,22 @@ def main(args):
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
 
+                # Convert masked images to latent space
+                masked_latents = vae.encode(
+                    batch["masked_images"].reshape(batch["pixel_values"].shape).to(dtype=weight_dtype)
+                ).latent_dist.sample()
+                masked_latents = masked_latents * vae.config.scaling_factor
+
+                masks = batch["masks"]
+                # resize the mask to latents shape as we concatenate the mask to the latents
+                mask = torch.stack(
+                    [
+                        torch.nn.functional.interpolate(mask, size=(args.resolution // 8, args.resolution // 8))
+                        for mask in masks
+                    ]
+                )
+                mask = mask.reshape(-1, 1, args.resolution // 8, args.resolution // 8)
+
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]

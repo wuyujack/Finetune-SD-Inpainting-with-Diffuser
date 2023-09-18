@@ -1333,7 +1333,7 @@ class StableDiffusionControlNetInpaintPipeline(DiffusionPipeline, TextualInversi
             do_denormalize = [not has_nsfw for has_nsfw in has_nsfw_concept]
 
         image = self.image_processor.postprocess(image, output_type=output_type, do_denormalize=do_denormalize)
-
+        
         # Offload last model to CPU
         if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
             self.final_offload_hook.offload()
