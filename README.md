@@ -7,3 +7,5 @@ As an early exploration, the finetuning results are not good for virtual try-on,
 To use the code, please refer to the folder of `/example/controlnet/`. The training command are the .sh files with `run_` in front of the file name, e.g., `run_stable_diffusion_controlnet_inpaint.sh`.
 
 I use the VITON-HD dataset by defaulted and has done some postprocessing for training, where you can download the post-processed dataset from [here](https://drive.google.com/file/d/1SEck0NoSIttSpCu0wfYgHIEl5i-tZWjH/view?usp=sharing).
+
+For the configuration of the environment, please refer to the `environment.yml`.
